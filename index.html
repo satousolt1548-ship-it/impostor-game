@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIアートインポスター</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; max-width: 640px; margin-inline: auto; }
+  h1 { font-size: 22px; margin: 8px 0 16px; }
+  h2 { font-size: 17px; margin: 16px 0 8px; }
+  .card { border: 1px solid #8884; border-radius: 12px; padding: 14px; margin: 10px 0; }
+  input, select, button, textarea { font-size: 16px; padding: 10px; border-radius: 8px; }
+  input, select, textarea { width: 100%; box-sizing: border-box; margin: 6px 0; }
+  button { cursor: pointer; border: 1px solid #8886; background: #4a7ddb; color: #fff; width: 100%; margin: 6px 0; }
+  button.sub { background: transparent; color: inherit; }
+  button:disabled { opacity: .45; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid img { width: 100%; border-radius: 10px; display: block; }
+  .grid figure { margin: 0; }
+  .big { font-size: 20px; font-weight: 700; }
+  .muted { opacity: .7; font-size: 13px; }
+  .center { text-align: center; }
+  .impostor { color: #d33; font-weight: 700; }
+  .topic { background: #ffb34033; border-radius: 8px; padding: 10px; font-weight: 700; text-align: center; }
+  #err { color: #d33; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<h1>AIアートインポスター</h1>
+<div id="err"></div>
+<div id="app"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const app = $("#app");
+const err = $("#err");
+let me = JSON.parse(localStorage.getItem("impostor_me") || "null");
+let state = null;
+let timerInt = null;
+
+async function api(path, method = "GET", body = null) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : null,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "エラーが発生しました");
+  return data;
+}
+function fail(e) { err.textContent = e.message || String(e); }
+function clearErr() { err.textContent = ""; }
+
+function home() {
+  stopPoll();
+  app.innerHTML = `
+    <div class="card">
+      <label>あなたの名前</label>
+      <input id="name" maxlength="12" placeholder="名前" value="${me?.name || ""}">
+    </div>
+    <div class="card">
+      <h2>ルームを作る</h2>
+      <label>ラウンド数</label>
+      <select id="rounds"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+      <label><input type="checkbox" id="bots" style="width:auto" checked> ダミー2人を含める（少人数テスト用）</label>
+      <button id="create">ルームを作成</button>
+    </div>
+    <div class="card">
+      <h2>ルームに参加</h2>
+      <input id="code" maxlength="5" placeholder="合言葉（5文字）" style="text-transform:uppercase">
+      <button id="join" class="sub">参加する</button>
+    </div>`;
+  $("#create").onclick = async () => {
+    clearErr();
+    const name = $("#name").value.trim();
+    if (!name) return fail(new Error("名前を入れてください"));
+    try {
+      const r = await api("/api/rooms", "POST", { name, totalRounds: +$("#rounds").value, withBots: $("#bots").checked });
+      me = { name, code: r.code, playerId: r.playerId };
+      localStorage.setItem("impostor_me", JSON.stringify(me));
+      room();
+    } catch (e) { fail(e); }
+  };
+  $("#join").onclick = async () => {
+    clearErr();
+    const name = $("#name").value.trim();
+    const code = $("#code").value.trim().toUpperCase();
+    if (!name || !code) return fail(new Error("名前と合言葉を入れてください"));
+    try {
+      const r = await api(`/api/rooms/${code}/join`, "POST", { name });
+      me = { name, code: r.code, playerId: r.playerId };
+      localStorage.setItem("impostor_me", JSON.stringify(me));
+      room();
+    } catch (e) { fail(e); }
+  };
+}
+
+function stopPoll() { if (timerInt) { clearInterval(timerInt); timerInt = null; } }
+
+async function refresh() {
+  try {
+    state = await api(`/api/rooms/${me.code}/state?player=${me.playerId}`);
+    render();
+  } catch (e) { fail(e); }
+}
+
+function room() {
+  stopPoll();
+  refresh();
+  timerInt = setInterval(refresh, 1500);
+}
+function countdown() {
+  if (!state?.phaseEndsAt) return "";
+  const s = Math.max(0, Math.round((state.phaseEndsAt - Date.now()) / 1000));
+  return `残り ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+function playersHtml() {
+  return "<ul>" + state.players.map(p =>
+    `<li>${p.name}${p.id === state.hostId ? "（ホスト）" : ""} … ${p.score}点</li>`).join("") + "</ul>";
+}
+
+function render() {
+  if (!state) return;
+  const isHost = me.playerId === state.hostId;
+  if (state.phase === "lobby") {
+    app.innerHTML = `
+      <div class="card center">合言葉<br><span class="big">${state.code}</span><br>
+      <span class="muted">友達にこの合言葉を伝えてね</span></div>
+      <div class="card"><h2>参加者（${state.players.length}人）</h2>${playersHtml()}
+      ${isHost ? `<button id="start" ${state.players.length < 3 ? "disabled" : ""}>ゲーム開始</button>
+      ${state.players.length < 3 ? '<p class="muted">3人以上で開始できます</p>' : ""}` : '<p class="muted">ホストの開始を待っています…</p>'}
+      <button class="sub" id="leave">退出する</button></div>`;
+    const st = $("#start");
+    if (st) st.onclick = async () => { try { await api(`/api/rooms/${me.code}/start`, "POST", { playerId: me.playerId }); refresh(); } catch (e) { fail(e); } };
+    $("#leave").onclick = () => { localStorage.removeItem("impostor_me"); me = null; home(); };
+  }
+  else if (state.phase === "writing") {
+    const head = state.youAreImpostor
+      ? `<p class="impostor">あなたはインポスターです。お題は秘密。</p><p class="muted">まわりの絵の雰囲気に紛れる指示文を書いてください。</p>`
+      : `<div class="topic">お題：${state.topic}</div>`;
+    app.innerHTML = `
+      <div class="card"><h2>ラウンド ${state.round} / ${state.totalRounds}：指示文を書く</h2>${head}
+      <p class="muted">${countdown()} ／ 提出 ${state.submittedCount} / ${state.playerCount} 人</p>
+      ${state.mySubmitted ? '<p>提出済みです。全員の提出を待っています…</p>' : `
+      <textarea id="prompt" rows="3" maxlength="200" placeholder="例：雲の上の小さなパン屋、朝の光、窓から顔を出す店主"></textarea>
+      <button id="submit">提出する</button>
+      <button id="skip" class="sub">おまかせで進む（自動の指示文で参加）</button>`}
+      </div>`;
+    const sub = $("#submit");
+    if (sub) sub.onclick = async () => {
+      const prompt = $("#prompt").value.trim();
+      if (!prompt) return fail(new Error("指示文を書いてください"));
+      try { await api(`/api/rooms/${me.code}/submit`, "POST", { playerId: me.playerId, prompt }); refresh(); } catch (e) { fail(e); }
+    };
+    const sk = $("#skip");
+    if (sk) sk.onclick = async () => { try { await api(`/api/rooms/${me.code}/submit`, "POST", { playerId: me.playerId, skip: true }); refresh(); } catch (e) { fail(e); } };
+  }
+  else if (state.phase === "generating") {
+    app.innerHTML = `<div class="card center"><h2>生成中…</h2><p>全員の絵を作っています。少し待ってね。</p></div>`;
+  }
+  else if (state.phase === "voting") {
+    app.innerHTML = `
+      <div class="card"><h2>投票：お題を知らずに書いたのはどれ？</h2>
+      <p class="muted">${countdown()} ／ 自分の絵には投票できません</p>
+      <div class="grid">
+      ${state.gallery.map((g, i) => `
+        <figure>
+          ${g.imageUrl ? `<img src="${g.imageUrl}" alt="絵${i + 1}">` : '<div class="card center">生成失敗</div>'}
+          <button data-vote="${g.playerId}" ${g.playerId === me.playerId || state.myVote ? "disabled" : ""}>
+            ${g.playerId === me.playerId ? "これは自分の絵" : state.myVote === g.playerId ? "投票済み" : `絵${i + 1}に投票`}</button>
+        </figure>`).join("")}
+      </div></div>`;
+    app.querySelectorAll("[data-vote]").forEach(btn => {
+      btn.onclick = async () => {
+        try { await api(`/api/rooms/${me.code}/vote`, "POST", { playerId: me.playerId, targetPlayerId: btn.dataset.vote }); refresh(); } catch (e) { fail(e); }
+      };
+    });
+  }
+  else if (state.phase === "reveal") {
+    const r = state.result;
+    app.innerHTML = `
+      <div class="card center"><h2>${r.caught ? "インポスター的中！" : "インポスターの逃げ切り！"}</h2>
+      <p>お題：<b>${state.topic}</b> ／ インポスターは <b>${state.players.find(p => p.id === state.impostorId)?.name}</b> でした</p></div>
+      <div class="grid">
+      ${state.entries.map(e => `
+        <figure>
+          ${e.imageUrl ? `<img src="${e.imageUrl}" alt="">` : '<div class="card center">生成失敗</div>'}
+          <figcaption class="muted">${e.name}${e.playerId === state.impostorId ? ' <span class="impostor">インポスター</span>' : ""} ／ ${e.votes}票<br>指示文：${e.prompt || ""}${e.isFallback ? "（おまかせ）" : ""}</figcaption>
+        </figure>`).join("")}
+      </div>
+      <div class="card"><h2>現在のスコア</h2>${playersHtml()}
+      ${isHost ? `<button id="next">${state.round >= state.totalRounds ? "最終結果へ" : "次のラウンドへ"}</button>` : '<p class="muted">ホストが次へ進めるのを待っています…</p>'}
+      </div>`;
+    const nx = $("#next");
+    if (nx) nx.onclick = async () => { try { await api(`/api/rooms/${me.code}/next`, "POST", { playerId: me.playerId }); refresh(); } catch (e) { fail(e); } };
+  }
+  else if (state.phase === "finished") {
+    app.innerHTML = `
+      <div class="card"><h2>最終順位</h2>
+      <ol>${state.standings.map(s => `<li>${s.name} … ${s.score}点</li>`).join("")}</ol>
+      <button id="again">トップに戻る</button></div>`;
+    $("#again").onclick = () => { localStorage.removeItem("impostor_me"); me = null; home(); };
+  }
+}
+
+if (me?.code && me?.playerId) room(); else home();
+</script>
+</body>
+</html>
