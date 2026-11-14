@@ -13,8 +13,8 @@ const FLOYO_API = "https://api.floyo.ai";
 const WRITING_MS = 90_000;
 const VOTING_MS = 60_000;
 const COMEBACK_MS = 30_000;
-const PRESENT_MS = Number(process.env.PRESENT_MS || 60_000); // 絵を2枚ずつ見せる時間／画面（2026-11-14、ユーザー指定で約1分）
-const presentScreens = (room) => Math.ceil(room.gallery.length / 2);
+const PRESENT_MS = Number(process.env.PRESENT_MS || 60_000); // 絵を1枚ずつ見せる時間（2026-11-14、ユーザー指定で約1分）
+const presentScreens = (room) => room.gallery.length;
 function enterVoting(room) {
   room.phase = "voting";
   room.phaseStartedAt = Date.now();
@@ -225,7 +225,7 @@ function beginGeneration(room) {
   Promise.allSettled(jobs).then(() => {
     if (room.phase !== "generating") return;
     room.gallery = shuffle([...room.submissions.keys()]);
-    // いきなり全員分を並べず、2枚ずつ見せてから投票に入る。
+    // いきなり全員分を並べず、1枚ずつ見せてから投票に入る。
     room.phase = "presenting";
     room.phaseStartedAt = Date.now();
     room.presentIdx = 0;
@@ -329,19 +329,19 @@ function publicState(room, viewerId) {
     base.youAreImpostor = isImpostor;
   }
   if (room.phase === "presenting") {
-    const start = (room.presentIdx || 0) * 2;
-    const pids = room.gallery.slice(start, start + 2);
+    const idx = room.presentIdx || 0;
+    const pid = room.gallery[idx];
     base.present = {
-      screen: room.presentIdx || 0,
+      screen: idx,
       screens: presentScreens(room),
-      from: start + 1,
-      to: start + pids.length,
+      from: idx + 1,
+      to: idx + 1,
       totalImages: room.gallery.length,
       isHost: viewerId === room.hostId,
-      items: pids.map((pid) => ({
+      items: [{
         imageUrl: room.submissions.get(pid)?.imageUrl || null,
         isMine: pid === viewerId,
-      })),
+      }],
     };
   }
   if (room.phase === "voting" || room.phase === "comeback" || room.phase === "reveal") {
