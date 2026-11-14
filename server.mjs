@@ -344,6 +344,13 @@ const server = http.createServer(async (req, res) => {
         if (room.submissions.has(b.playerId)) return json(res, 400, { error: "提出済みです" });
         const prompt = b.skip ? fallbackPrompt(room) : String(b.prompt || "").slice(0, 200).trim();
         if (!prompt) return json(res, 400, { error: "指示文が空です" });
+        if (!b.skip) {
+          // ルール（2026-11-14）：お題の言葉はそのまま書けない。カタカナ→ひらがなに寄せても判定する。
+          const kataToHira = (s) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+          if (prompt.includes(room.topic) || kataToHira(prompt).includes(kataToHira(room.topic))) {
+            return json(res, 400, { error: "お題の言葉はそのまま書けません。様子を別の言葉で表してみてください" });
+          }
+        }
         room.submissions.set(b.playerId, { prompt, isFallback: !!b.skip, status: "queued" });
         maybeGenerate(room);
         return json(res, 200, { ok: true });
