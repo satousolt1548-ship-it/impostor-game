@@ -51,18 +51,14 @@ const STYLE_LABELS = {
 
 // お題デッキ（2026-11-14 ユーザー指示でシンプル化：短い一場面ワード、ジャンル別）
 // 追加はこの配列に足して再デプロイするだけ。
-const TOPICS = [
-  // 場所
-  "パン屋", "図書館", "温泉", "水族館", "神社",
-  // 動物
-  "猫カフェ", "ペンギン", "馬", "フクロウ", "金魚",
-  // 季節・行事
-  "夏祭り", "ハロウィン", "クリスマス", "花見", "雪山",
-  // 食べ物
-  "ラーメン屋", "パフェ", "寿司", "駄菓子屋", "屋台",
-  // ファンタジー
-  "魔法学校", "海賊船", "ドラゴン", "宇宙", "吸血鬼",
-];
+const GENRES = {
+  "場所": ["パン屋", "図書館", "温泉", "水族館", "神社"],
+  "動物": ["猫カフェ", "ペンギン", "馬", "フクロウ", "金魚"],
+  "季節・行事": ["夏祭り", "ハロウィン", "クリスマス", "花見", "雪山"],
+  "食べ物": ["ラーメン屋", "パフェ", "寿司", "駄菓子屋", "屋台"],
+  "ファンタジー": ["魔法学校", "海賊船", "ドラゴン", "宇宙", "吸血鬼"],
+};
+const TOPICS = Object.values(GENRES).flat();
 
 const workflowTpl = JSON.parse(await readFile(path.join(__dir, "workflow.json"), "utf8"));
 
@@ -82,11 +78,12 @@ const shuffle = (a) => {
   return x;
 };
 
-function makeRoom(hostName, totalRounds, withBots) {
+function makeRoom(hostName, totalRounds, withBots, genre) {
   const room = {
     code: newCode(),
     phase: "lobby",
     round: 0,
+    genre: GENRES[genre] ? genre : "全部",
     totalRounds: Math.min(5, Math.max(1, totalRounds || 3)),
     players: [],
     topic: null,
@@ -121,8 +118,10 @@ function addPlayer(room, name, isBot) {
 
 function startRound(room) {
   room.round += 1;
-  const pool = TOPICS.filter((t) => !room.usedTopics.includes(t));
-  room.topic = pool[Math.floor(Math.random() * pool.length)] || TOPICS[0];
+  const deck = room.genre && GENRES[room.genre] ? GENRES[room.genre] : TOPICS;
+  let pool = deck.filter((t) => !room.usedTopics.includes(t));
+  if (!pool.length) pool = deck;
+  room.topic = pool[Math.floor(Math.random() * pool.length)];
   room.usedTopics.push(room.topic);
   room.impostorId = room.players[Math.floor(Math.random() * room.players.length)].id;
   room.submissions = new Map();
@@ -344,6 +343,7 @@ function publicState(room, viewerId) {
     phase: room.phase,
     round: room.round,
     totalRounds: room.totalRounds,
+    genre: room.genre || "全部",
     hostId: room.hostId,
     players: room.players.map((p) => ({ id: p.id, name: p.name, score: p.score, isBot: p.isBot })),
     phaseEndsAt: room.phase === "writing" ? room.phaseStartedAt + WRITING_MS
@@ -427,7 +427,7 @@ const server = http.createServer(async (req, res) => {
     if (parts[0] === "api" && parts[1] === "rooms") {
       if (req.method === "POST" && parts.length === 2) {
         const b = await bodyJson(req);
-        const { room, host } = makeRoom(b.name, b.totalRounds, b.withBots);
+        const { room, host } = makeRoom(b.name, b.totalRounds, b.withBots, b.genre);
         return json(res, 200, { code: room.code, playerId: host.id });
       }
       const code = (parts[2] || "").toUpperCase();
