@@ -197,13 +197,17 @@ async function generateFor(room, playerId, sub) {
       if (detail.status === "complete") {
         // Outputs can lag a moment behind the status flip; re-fetch a few times.
         let out = (detail.outputs || [])[0];
-        for (let i = 0; i < 3 && !(out && out.presigned_url); i++) {
-          await new Promise((r) => setTimeout(r, 3000));
+        for (let i = 0; i < 5 && !(out && out.presigned_url); i++) {
+          await new Promise((r) => setTimeout(r, 4000));
           const again = await floyo(`/runs/${sub.runId}?expand=outputs.presigned_url&presigned_url_expires_in=3600`);
           out = (again.outputs || [])[0];
         }
         sub.imageUrl = out ? out.presigned_url || null : null;
-        sub.status = sub.imageUrl ? "done" : "failed";
+        if (sub.imageUrl) { sub.status = "done"; return; }
+        // URLの到着が遅れているだけのことがある。諦めず裏で取り直し続ける
+        // （届いた時点で画面の次の更新から表示される）。
+        sub.status = "resolving";
+        resolveLater(sub);
         return;
       }
       if (["failed", "error", "cancelled"].includes(detail.status)) {
@@ -216,6 +220,19 @@ async function generateFor(room, playerId, sub) {
     console.error("generation failed:", e.message);
     sub.status = "failed";
   }
+}
+
+// 生成は終わったのに画像URLだけ遅れている場合の裏側リトライ（最大約5分）。
+async function resolveLater(sub) {
+  for (let i = 0; i < 30 && !sub.imageUrl; i++) {
+    await new Promise((r) => setTimeout(r, 10_000));
+    try {
+      const again = await floyo(`/runs/${sub.runId}?expand=outputs.presigned_url&presigned_url_expires_in=3600`);
+      const out = (again.outputs || [])[0];
+      if (out?.presigned_url) { sub.imageUrl = out.presigned_url; sub.status = "done"; return; }
+    } catch { /* keep trying */ }
+  }
+  if (!sub.imageUrl) sub.status = "failed";
 }
 
 function beginGeneration(room) {
