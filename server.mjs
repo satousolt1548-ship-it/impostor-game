@@ -14,6 +14,20 @@ const WRITING_MS = 90_000;
 const VOTING_MS = 60_000;
 const COMEBACK_MS = 30_000;
 const foldKana = (s) => String(s || "").trim().replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+// 絵のタッチ（プレイヤーごとに選べる。「free」は本人が指示文で表現するので何も付けない）
+const STYLES = {
+  storybook: ", whimsical storybook illustration, warm colors",
+  anime: ", anime style, cel shading, vibrant colors",
+  watercolor: ", watercolor painting, soft washes, gentle colors",
+  oil: ", oil painting, rich impasto texture",
+  pixel: ", pixel art, retro game style",
+  photo: ", photorealistic photo, natural light",
+  free: "",
+};
+const STYLE_LABELS = {
+  storybook: "絵本", anime: "アニメ", watercolor: "水彩", oil: "油絵",
+  pixel: "ドット絵", photo: "写真風", free: "自分で表現",
+};
 
 // お題デッキ（2026-11-14 ユーザー指示でシンプル化：短い一場面ワード、ジャンル別）
 // 追加はこの配列に足して再デプロイするだけ。
@@ -149,7 +163,7 @@ async function generateFor(room, playerId, sub) {
   sub.status = "generating";
   try {
     const wf = JSON.parse(JSON.stringify(workflowTpl.workflow));
-    wf["66:64"].inputs.text = `${sub.prompt}, whimsical storybook illustration, warm colors`;
+    wf["66:64"].inputs.text = `${sub.prompt}${STYLES[sub.style] ?? STYLES.storybook}`;
     wf["66:65"].inputs.seed = Math.floor(Math.random() * 2 ** 31);
     const created = await floyo("/runs", {
       method: "POST",
@@ -310,6 +324,7 @@ function publicState(room, viewerId) {
       playerId: pid,
       name: room.players.find((p) => p.id === pid)?.name,
       prompt: room.submissions.get(pid)?.prompt,
+      styleLabel: STYLE_LABELS[room.submissions.get(pid)?.style] || "絵本",
       isFallback: room.submissions.get(pid)?.isFallback,
       imageUrl: room.submissions.get(pid)?.imageUrl || null,
       votes: room.lastResult?.tally?.[pid] || 0,
@@ -384,7 +399,8 @@ const server = http.createServer(async (req, res) => {
             return json(res, 400, { error: "お題の言葉はそのまま書けません。様子を別の言葉で表してみてください" });
           }
         }
-        room.submissions.set(b.playerId, { prompt, isFallback: !!b.skip, status: "queued" });
+        const style = STYLES[b.style] !== undefined ? b.style : "storybook";
+        room.submissions.set(b.playerId, { prompt, isFallback: !!b.skip, status: "queued", style });
         maybeGenerate(room);
         return json(res, 200, { ok: true });
       }
