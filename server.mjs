@@ -13,6 +13,7 @@ const FLOYO_API = "https://api.floyo.ai";
 const WRITING_MS = 90_000;
 const VOTING_MS = 60_000;
 const COMEBACK_MS = 30_000;
+const PRESENT_MS = 4_000; // 絵を1枚ずつ見せる間隔（2026-11-14追加）
 const foldKana = (s) => String(s || "").trim().replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
 // 絵のタッチ（プレイヤーごとに選べる。「free」は本人が指示文で表現するので何も付けない）
 const STYLES = {
@@ -205,16 +206,9 @@ function beginGeneration(room) {
   Promise.allSettled(jobs).then(() => {
     if (room.phase !== "generating") return;
     room.gallery = shuffle([...room.submissions.keys()]);
-    room.phase = "voting";
+    // いきなり全員分を並べず、1枚ずつ見せてから投票に入る。
+    room.phase = "presenting";
     room.phaseStartedAt = Date.now();
-    for (const p of room.players) {
-      if (!p.isBot) continue;
-      setTimeout(() => {
-        if (room.phase !== "voting" || room.votes.has(p.id)) return;
-        const targets = room.gallery.filter((id) => id !== p.id);
-        room.votes.set(p.id, targets[Math.floor(Math.random() * targets.length)]);
-      }, 2000 + Math.random() * 5000);
-    }
   });
 }
 
@@ -280,6 +274,18 @@ setInterval(() => {
         }
       }
       beginGeneration(room);
+    } else if (room.phase === "presenting" && now - room.phaseStartedAt > room.gallery.length * PRESENT_MS) {
+      room.phase = "voting";
+      room.phaseStartedAt = now;
+      for (const p of room.players) {
+        if (!p.isBot) continue;
+        setTimeout(() => {
+          if (room.phase !== "voting" || room.votes.has(p.id)) return;
+          const targets = room.gallery.filter((id) => id !== p.id);
+          room.votes.set(p.id, targets[Math.floor(Math.random() * targets.length)]);
+          if (room.votes.size >= room.players.length) reveal(room);
+        }, 2000 + Math.random() * 5000);
+      }
     } else if (room.phase === "voting" && now - room.phaseStartedAt > VOTING_MS) {
       reveal(room);
     } else if (room.phase === "comeback" && now - room.phaseStartedAt > COMEBACK_MS) {
@@ -300,15 +306,26 @@ function publicState(room, viewerId) {
     players: room.players.map((p) => ({ id: p.id, name: p.name, score: p.score, isBot: p.isBot })),
     phaseEndsAt: room.phase === "writing" ? room.phaseStartedAt + WRITING_MS
       : room.phase === "voting" ? room.phaseStartedAt + VOTING_MS
-      : room.phase === "comeback" ? room.phaseStartedAt + COMEBACK_MS : null,
+      : room.phase === "comeback" ? room.phaseStartedAt + COMEBACK_MS
+      : room.phase === "presenting" ? room.phaseStartedAt + room.gallery.length * PRESENT_MS : null,
     submittedCount: room.submissions.size,
     playerCount: room.players.length,
     mySubmitted: room.submissions.has(viewerId),
     myVote: room.votes.get(viewerId) || null,
   };
-  if (["writing", "generating", "voting", "comeback", "reveal"].includes(room.phase)) {
+  if (["writing", "generating", "presenting", "voting", "comeback", "reveal"].includes(room.phase)) {
     base.topic = isImpostor ? null : room.topic;
     base.youAreImpostor = isImpostor;
+  }
+  if (room.phase === "presenting") {
+    const idx = Math.min(room.gallery.length - 1, Math.floor((Date.now() - room.phaseStartedAt) / PRESENT_MS));
+    const pid = room.gallery[idx];
+    base.present = {
+      index: idx,
+      total: room.gallery.length,
+      imageUrl: room.submissions.get(pid)?.imageUrl || null,
+      isMine: pid === viewerId,
+    };
   }
   if (room.phase === "voting" || room.phase === "comeback" || room.phase === "reveal") {
     base.gallery = room.gallery.map((pid) => ({
