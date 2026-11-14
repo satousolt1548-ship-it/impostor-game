@@ -40,14 +40,25 @@ let state = null;
 let timerInt = null;
 
 async function api(path, method = "GET", body = null) {
-  const res = await fetch(path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : null,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "エラーが発生しました");
-  return data;
+  // 弱い回線向け：通信失敗とサーバー側の一時エラーは自動で数回リトライする（2026-11-14）。
+  // ゲーム側のエラー（4xx）はそのまま投げる。
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
+    let res;
+    try {
+      res = await fetch(path, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : null,
+      });
+    } catch (e) { lastErr = e; continue; } // 通信そのものの失敗はリトライ
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return data;
+    if (res.status >= 500) { lastErr = new Error(data.error || "サーバーが混み合っています"); continue; }
+    throw new Error(data.error || "エラーが発生しました"); // 4xxはゲーム側エラーなのでリトライしない
+  }
+  throw lastErr || new Error("通信に失敗しました");
 }
 function fail(e) { err.textContent = e.message || String(e); }
 function clearErr() { err.textContent = ""; }
@@ -103,6 +114,7 @@ function stopPoll() { if (timerInt) { clearInterval(timerInt); timerInt = null; 
 async function refresh() {
   try {
     state = await api(`/api/rooms/${me.code}/state?player=${me.playerId}`);
+    if (err.dataset.netwait) { err.textContent = ""; delete err.dataset.netwait; }
     render();
   } catch (e) {
     if (e.message && e.message.includes("見つかりません")) {
@@ -113,7 +125,9 @@ async function refresh() {
       fail(new Error("前のルームは終了していました。新しいルームを作るか、合言葉で参加してください"));
       return;
     }
-    fail(e);
+    // 通信が弱いだけなら落とさず、再接続中の表示で次のポーリングを待つ
+    err.dataset.netwait = "1";
+    err.textContent = "接続が弱いみたい…再接続中";
   }
 }
 
