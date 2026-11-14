@@ -198,12 +198,19 @@ function render() {
   }
   else if (state.phase === "presenting") {
     const pr = state.present;
+    const last = pr.screen >= pr.screens - 1;
     app.innerHTML = `
       <div class="card center"><h2>みんなの絵ができました</h2>
-      <p class="muted">絵 ${pr.index + 1} / ${pr.total} ／ ぜんぶ見終わったら投票が始まります</p>
-      ${pr.imageUrl ? `<img src="${pr.imageUrl}" alt="絵${pr.index + 1}" style="width:100%;border-radius:10px">` : '<div class="card center">生成失敗</div>'}
-      ${pr.isMine ? '<p class="muted">これは自分の絵</p>' : ""}
+      <p class="muted">絵 ${pr.from} / ${pr.totalImages} ／ <span data-cd>${countdown()}</span></p>
+      ${pr.items.map((it, i) => `
+        <div style="margin:10px 0">
+        ${it.imageUrl ? `<img src="${it.imageUrl}" alt="絵${pr.from + i}" style="width:100%;border-radius:10px">` : '<div class="card center">生成失敗</div>'}
+        ${it.isMine ? '<p class="muted">これは自分の絵</p>' : ""}
+        </div>`).join("")}
+      ${pr.isHost ? `<button id="pnext">${last ? "投票へ進む" : "次の絵へ"}</button>` : '<p class="muted">ホストが次へ進めます（自動でも進みます）</p>'}
       </div>`;
+    const pn = $("#pnext");
+    if (pn) pn.onclick = async () => { try { await api(`/api/rooms/${me.code}/present-next`, "POST", { playerId: me.playerId }); refresh(); } catch (e) { fail(e); } };
   }
   else if (state.phase === "voting") {
     app.innerHTML = `
