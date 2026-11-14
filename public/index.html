@@ -148,7 +148,7 @@ function render() {
   else if (state.phase === "writing") {
     const head = state.youAreImpostor
       ? `<p class="impostor">あなたはインポスターです。お題は秘密。</p><p class="muted">まわりの絵の雰囲気に紛れる指示文を書いてください。</p>`
-      : `<div class="topic">お題：${state.topic}</div>`;
+      : `<div class="topic">お題：${state.topic}</div><p class="muted">※お題の言葉はそのまま使えません。様子を言葉で表してね</p>`;
     app.innerHTML = `
       <div class="card"><h2>ラウンド ${state.round} / ${state.totalRounds}：指示文を書く</h2>${head}
       <p class="muted">${countdown()} ／ 提出 ${state.submittedCount} / ${state.playerCount} 人</p>
