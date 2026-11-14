@@ -11,9 +11,9 @@ const PORT = process.env.PORT || 3000;
 const FLOYO_KEY = process.env.FLOYO_API_KEY || "";
 const FLOYO_API = "https://api.floyo.ai";
 const WRITING_MS = 90_000;
-const VOTING_MS = 60_000;
+const VOTING_MS = 45_000;
 const COMEBACK_MS = 30_000;
-const PRESENT_MS = Number(process.env.PRESENT_MS || 60_000); // 絵を1枚ずつ見せる時間（2026-11-14、ユーザー指定で約1分）
+const PRESENT_MS = Number(process.env.PRESENT_MS || 30_000); // 絵を1枚ずつ見せる時間（当初60秒→2026-11-14夜「全部軽く」で30秒に短縮）
 const presentScreens = (room) => room.gallery.length;
 function enterVoting(room) {
   room.phase = "voting";
