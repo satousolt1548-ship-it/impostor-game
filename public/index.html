@@ -130,8 +130,21 @@ function playersHtml() {
     `<li>${p.name}${p.id === state.hostId ? "（ホスト）" : ""} … ${p.score}点</li>`).join("") + "</ul>";
 }
 
+let lastSig = null;
 function render() {
   if (!state) return;
+  // 状態が変わっていない間は再描画しない（入力中のキーボードが閉じてしまうため）。
+  // カウントダウンだけは毎回更新する。
+  const sig = JSON.stringify(state);
+  if (sig === lastSig) {
+    document.querySelectorAll("[data-cd]").forEach(el => { el.textContent = countdown(); });
+    return;
+  }
+  lastSig = sig;
+  // 再描画で入力が消えないよう、フォーカス中の入力内容とカーソル位置を退避する。
+  const ae = document.activeElement;
+  const saved = (ae && app.contains(ae) && ae.id && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA"))
+    ? { id: ae.id, value: ae.value, start: ae.selectionStart, end: ae.selectionEnd } : null;
   const isHost = me.playerId === state.hostId;
   if (state.phase === "lobby") {
     app.innerHTML = `
@@ -151,7 +164,7 @@ function render() {
       : `<div class="topic">お題：${state.topic}</div><p class="muted">※お題の言葉はそのまま使えません。様子を言葉で表してね</p>`;
     app.innerHTML = `
       <div class="card"><h2>ラウンド ${state.round} / ${state.totalRounds}：指示文を書く</h2>${head}
-      <p class="muted">${countdown()} ／ 提出 ${state.submittedCount} / ${state.playerCount} 人</p>
+      <p class="muted"><span data-cd>${countdown()}</span> ／ 提出 ${state.submittedCount} / ${state.playerCount} 人</p>
       ${state.mySubmitted ? '<p>提出済みです。全員の提出を待っています…</p>' : `
       <textarea id="prompt" rows="3" maxlength="200" placeholder="例：雲の上の小さなパン屋、朝の光、窓から顔を出す店主"></textarea>
       <button id="submit">提出する</button>
@@ -172,7 +185,7 @@ function render() {
   else if (state.phase === "voting") {
     app.innerHTML = `
       <div class="card"><h2>投票：お題を知らずに書いたのはどれ？</h2>
-      <p class="muted">${countdown()} ／ 自分の絵には投票できません</p>
+      <p class="muted"><span data-cd>${countdown()}</span> ／ 自分の絵には投票できません</p>
       <div class="grid">
       ${state.gallery.map((g, i) => `
         <figure>
@@ -198,7 +211,7 @@ function render() {
       app.innerHTML = `
       <div class="card"><h2>捕まってしまった…でも逆転のチャンス！</h2>
       <p>みんなの絵をヒントに、<b>本当のお題</b>を当てれば逆転勝ち（+3点）。</p>
-      <p class="muted">${countdown()} ／ 1回だけ答えられます</p>
+      <p class="muted"><span data-cd>${countdown()}</span> ／ 1回だけ答えられます</p>
       <input id="guess" maxlength="30" placeholder="お題は…">
       <button id="guessBtn">お題はこれ！</button></div>
       <div class="card"><h2>みんなの絵</h2>${gallery}</div>`;
@@ -211,7 +224,7 @@ function render() {
       app.innerHTML = `
       <div class="card center"><h2>インポスターが逆転を狙っています…</h2>
       <p>インポスターがお題を当てたら逆転負け。当てられなければ的中した人の勝ち。</p>
-      <p class="muted">${countdown()}</p></div>
+      <p class="muted"><span data-cd>${countdown()}</span></p></div>
       <div class="card"><h2>みんなの絵</h2>${gallery}</div>`;
     }
   }
@@ -245,6 +258,14 @@ function render() {
       <ol>${state.standings.map(s => `<li>${s.name} … ${s.score}点</li>`).join("")}</ol>
       <button id="again">トップに戻る</button></div>`;
     $("#again").onclick = () => { localStorage.removeItem("impostor_me"); me = null; home(); };
+  }
+  if (saved) {
+    const el = document.getElementById(saved.id);
+    if (el) {
+      el.value = saved.value;
+      el.focus({ preventScroll: true });
+      try { el.setSelectionRange(saved.start, saved.end); } catch {}
+    }
   }
 }
 
