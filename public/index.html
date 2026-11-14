@@ -102,7 +102,17 @@ async function refresh() {
   try {
     state = await api(`/api/rooms/${me.code}/state?player=${me.playerId}`);
     render();
-  } catch (e) { fail(e); }
+  } catch (e) {
+    if (e.message && e.message.includes("見つかりません")) {
+      stopPoll();
+      localStorage.removeItem("impostor_me");
+      me = null;
+      home();
+      fail(new Error("前のルームは終了していました。新しいルームを作るか、合言葉で参加してください"));
+      return;
+    }
+    fail(e);
+  }
 }
 
 function room() {
