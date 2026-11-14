@@ -259,11 +259,8 @@ function beginGeneration(room) {
   Promise.allSettled(jobs).then(() => {
     if (room.phase !== "generating") return;
     room.gallery = shuffle([...room.submissions.keys()]);
-    // いきなり全員分を並べず、1枚ずつ見せてから投票に入る。
-    room.phase = "presenting";
-    room.phaseStartedAt = Date.now();
-    room.presentIdx = 0;
-    room.presentStartedAt = Date.now();
+    // 生成が終わったら発表（1枚ずつ）は挟まず、投票画面の一括表示へ直行する（2026-11-14夜、ユーザー指示で変更）。
+    enterVoting(room);
   });
 }
 
