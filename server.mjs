@@ -146,7 +146,21 @@ function startRound(room) {
   }
 }
 
-function fallbackPrompt(room) {
+// おまかせ（未提出・スキップ）用の自動指示文。
+// 市民にはお題ベースでよいが、インポスターにお題を渡すと答えが漏れるため、
+// インポスターにはお題を含まない汎用の情景をランダムに渡す（2026-11-14修正）。
+const GENERIC_FALLBACKS = [
+  "港町の朝市、活気のある風景",
+  "緑の多い公園、休日の昼下がり",
+  "商店街の夕方、買い物客でにぎわう通り",
+  "川辺の散歩道、のどかな風景",
+  "山のふもとの小さな駅、静かなホーム",
+  "海辺の遊歩道、晴れた日の光",
+];
+function fallbackPrompt(room, playerId) {
+  if (playerId && playerId === room.impostorId) {
+    return GENERIC_FALLBACKS[Math.floor(Math.random() * GENERIC_FALLBACKS.length)];
+  }
   return `${room.topic}の風景、明るい昼の光`;
 }
 
@@ -308,7 +322,7 @@ setInterval(() => {
     if (room.phase === "writing" && now - room.phaseStartedAt > WRITING_MS) {
       for (const p of room.players) {
         if (!room.submissions.has(p.id)) {
-          room.submissions.set(p.id, { prompt: fallbackPrompt(room), isFallback: true, status: "queued" });
+          room.submissions.set(p.id, { prompt: fallbackPrompt(room, p.id), isFallback: true, status: "queued" });
         }
       }
       beginGeneration(room);
@@ -441,7 +455,7 @@ const server = http.createServer(async (req, res) => {
         if (room.phase !== "writing") return json(res, 400, { error: "提出フェーズではありません" });
         if (!room.players.some((p) => p.id === b.playerId)) return json(res, 403, { error: "参加者ではありません" });
         if (room.submissions.has(b.playerId)) return json(res, 400, { error: "提出済みです" });
-        const prompt = b.skip ? fallbackPrompt(room) : String(b.prompt || "").slice(0, 200).trim();
+        const prompt = b.skip ? fallbackPrompt(room, b.playerId) : String(b.prompt || "").slice(0, 200).trim();
         if (!prompt) return json(res, 400, { error: "指示文が空です" });
         if (!b.skip) {
           // ルール（2026-11-14）：お題の言葉はそのまま書けない。カタカナ→ひらがなに寄せても判定する。
