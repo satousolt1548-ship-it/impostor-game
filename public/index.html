@@ -187,11 +187,45 @@ function render() {
       };
     });
   }
+  else if (state.phase === "comeback") {
+    const gallery = `
+      <div class="grid">
+      ${state.gallery.map((g, i) => `
+        <figure>${g.imageUrl ? `<img src="${g.imageUrl}" alt="絵${i + 1}">` : '<div class="card center">生成失敗</div>'}
+          <figcaption class="muted">絵${i + 1}</figcaption></figure>`).join("")}
+      </div>`;
+    if (state.youAreImpostor) {
+      app.innerHTML = `
+      <div class="card"><h2>捕まってしまった…でも逆転のチャンス！</h2>
+      <p>みんなの絵をヒントに、<b>本当のお題</b>を当てれば逆転勝ち（+3点）。</p>
+      <p class="muted">${countdown()} ／ 1回だけ答えられます</p>
+      <input id="guess" maxlength="30" placeholder="お題は…">
+      <button id="guessBtn">お題はこれ！</button></div>
+      <div class="card"><h2>みんなの絵</h2>${gallery}</div>`;
+      $("#guessBtn").onclick = async () => {
+        const guess = $("#guess").value.trim();
+        if (!guess) return fail(new Error("お題を書いてください"));
+        try { await api(`/api/rooms/${me.code}/comeback`, "POST", { playerId: me.playerId, guess }); refresh(); } catch (e) { fail(e); }
+      };
+    } else {
+      app.innerHTML = `
+      <div class="card center"><h2>インポスターが逆転を狙っています…</h2>
+      <p>インポスターがお題を当てたら逆転負け。当てられなければ的中した人の勝ち。</p>
+      <p class="muted">${countdown()}</p></div>
+      <div class="card"><h2>みんなの絵</h2>${gallery}</div>`;
+    }
+  }
   else if (state.phase === "reveal") {
     const r = state.result;
+    const head = r.comeback
+      ? (r.comeback.success ? "逆転勝ち！インポスターがお題を当てた！" : "インポスター的中！（逆転ならず）")
+      : (r.caught ? "インポスター的中！" : "インポスターの逃げ切り！");
+    const comebackLine = r.comeback
+      ? `<p>逆転当て：インポスターの回答は「<b>${r.comeback.guess ?? "（時間切れ）"}</b>」→ ${r.comeback.success ? "正解！" : "ハズレ"}</p>`
+      : "";
     app.innerHTML = `
-      <div class="card center"><h2>${r.caught ? "インポスター的中！" : "インポスターの逃げ切り！"}</h2>
-      <p>お題：<b>${state.topic}</b> ／ インポスターは <b>${state.players.find(p => p.id === state.impostorId)?.name}</b> でした</p></div>
+      <div class="card center"><h2>${head}</h2>
+      <p>お題：<b>${state.topic}</b> ／ インポスターは <b>${state.players.find(p => p.id === state.impostorId)?.name}</b> でした</p>${comebackLine}</div>
       <div class="grid">
       ${state.entries.map(e => `
         <figure>
