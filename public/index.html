@@ -143,7 +143,7 @@ function render() {
   lastSig = sig;
   // 再描画で入力が消えないよう、フォーカス中の入力内容とカーソル位置を退避する。
   const ae = document.activeElement;
-  const saved = (ae && app.contains(ae) && ae.id && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA"))
+  const saved = (ae && app.contains(ae) && ae.id && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT"))
     ? { id: ae.id, value: ae.value, start: ae.selectionStart, end: ae.selectionEnd } : null;
   const isHost = me.playerId === state.hostId;
   if (state.phase === "lobby") {
@@ -166,21 +166,44 @@ function render() {
       <div class="card"><h2>ラウンド ${state.round} / ${state.totalRounds}：指示文を書く</h2>${head}
       <p class="muted"><span data-cd>${countdown()}</span> ／ 提出 ${state.submittedCount} / ${state.playerCount} 人</p>
       ${state.mySubmitted ? '<p>提出済みです。全員の提出を待っています…</p>' : `
+      <label>絵のタッチ</label>
+      <select id="style">
+        <option value="storybook">絵本</option>
+        <option value="anime">アニメ</option>
+        <option value="watercolor">水彩</option>
+        <option value="oil">油絵</option>
+        <option value="pixel">ドット絵</option>
+        <option value="photo">写真風</option>
+        <option value="free">自分で表現する（指示文に書く）</option>
+      </select>
       <textarea id="prompt" rows="3" maxlength="200" placeholder="例：雲の上の小さなパン屋、朝の光、窓から顔を出す店主"></textarea>
       <button id="submit">提出する</button>
       <button id="skip" class="sub">おまかせで進む（自動の指示文で参加）</button>`}
       </div>`;
+    const sty = $("#style");
+    if (sty) sty.value = localStorage.getItem("impostor_style") || "storybook";
     const sub = $("#submit");
     if (sub) sub.onclick = async () => {
       const prompt = $("#prompt").value.trim();
       if (!prompt) return fail(new Error("指示文を書いてください"));
-      try { await api(`/api/rooms/${me.code}/submit`, "POST", { playerId: me.playerId, prompt }); refresh(); } catch (e) { fail(e); }
+      const style = $("#style").value;
+      localStorage.setItem("impostor_style", style);
+      try { await api(`/api/rooms/${me.code}/submit`, "POST", { playerId: me.playerId, prompt, style }); refresh(); } catch (e) { fail(e); }
     };
     const sk = $("#skip");
-    if (sk) sk.onclick = async () => { try { await api(`/api/rooms/${me.code}/submit`, "POST", { playerId: me.playerId, skip: true }); refresh(); } catch (e) { fail(e); } };
+    if (sk) sk.onclick = async () => { try { await api(`/api/rooms/${me.code}/submit`, "POST", { playerId: me.playerId, skip: true, style: $("#style")?.value }); refresh(); } catch (e) { fail(e); } };
   }
   else if (state.phase === "generating") {
     app.innerHTML = `<div class="card center"><h2>生成中…</h2><p>全員の絵を作っています。少し待ってね。</p></div>`;
+  }
+  else if (state.phase === "presenting") {
+    const pr = state.present;
+    app.innerHTML = `
+      <div class="card center"><h2>みんなの絵ができました</h2>
+      <p class="muted">絵 ${pr.index + 1} / ${pr.total} ／ ぜんぶ見終わったら投票が始まります</p>
+      ${pr.imageUrl ? `<img src="${pr.imageUrl}" alt="絵${pr.index + 1}" style="width:100%;border-radius:10px">` : '<div class="card center">生成失敗</div>'}
+      ${pr.isMine ? '<p class="muted">これは自分の絵</p>' : ""}
+      </div>`;
   }
   else if (state.phase === "voting") {
     app.innerHTML = `
@@ -243,7 +266,7 @@ function render() {
       ${state.entries.map(e => `
         <figure>
           ${e.imageUrl ? `<img src="${e.imageUrl}" alt="">` : '<div class="card center">生成失敗</div>'}
-          <figcaption class="muted">${e.name}${e.playerId === state.impostorId ? ' <span class="impostor">インポスター</span>' : ""} ／ ${e.votes}票<br>指示文：${e.prompt || ""}${e.isFallback ? "（おまかせ）" : ""}</figcaption>
+          <figcaption class="muted">${e.name}${e.playerId === state.impostorId ? ' <span class="impostor">インポスター</span>' : ""} ／ ${e.votes}票<br>指示文：${e.prompt || ""}${e.isFallback ? "（おまかせ）" : ""} ／ タッチ：${e.styleLabel || "絵本"}</figcaption>
         </figure>`).join("")}
       </div>
       <div class="card"><h2>現在のスコア</h2>${playersHtml()}
