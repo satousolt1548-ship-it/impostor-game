@@ -13,7 +13,26 @@ const FLOYO_API = "https://api.floyo.ai";
 const WRITING_MS = 90_000;
 const VOTING_MS = 60_000;
 const COMEBACK_MS = 30_000;
-const PRESENT_MS = 4_000; // 絵を1枚ずつ見せる間隔（2026-11-14追加）
+const PRESENT_MS = Number(process.env.PRESENT_MS || 60_000); // 絵を2枚ずつ見せる時間／画面（2026-11-14、ユーザー指定で約1分）
+const presentScreens = (room) => Math.ceil(room.gallery.length / 2);
+function enterVoting(room) {
+  room.phase = "voting";
+  room.phaseStartedAt = Date.now();
+  for (const p of room.players) {
+    if (!p.isBot) continue;
+    setTimeout(() => {
+      if (room.phase !== "voting" || room.votes.has(p.id)) return;
+      const targets = room.gallery.filter((id) => id !== p.id);
+      room.votes.set(p.id, targets[Math.floor(Math.random() * targets.length)]);
+      if (room.votes.size >= room.players.length) reveal(room);
+    }, 2000 + Math.random() * 5000);
+  }
+}
+function advancePresent(room) {
+  room.presentIdx += 1;
+  room.presentStartedAt = Date.now();
+  if (room.presentIdx >= presentScreens(room)) enterVoting(room);
+}
 const foldKana = (s) => String(s || "").trim().replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
 // 絵のタッチ（プレイヤーごとに選べる。「free」は本人が指示文で表現するので何も付けない）
 const STYLES = {
@@ -206,9 +225,11 @@ function beginGeneration(room) {
   Promise.allSettled(jobs).then(() => {
     if (room.phase !== "generating") return;
     room.gallery = shuffle([...room.submissions.keys()]);
-    // いきなり全員分を並べず、1枚ずつ見せてから投票に入る。
+    // いきなり全員分を並べず、2枚ずつ見せてから投票に入る。
     room.phase = "presenting";
     room.phaseStartedAt = Date.now();
+    room.presentIdx = 0;
+    room.presentStartedAt = Date.now();
   });
 }
 
@@ -274,18 +295,8 @@ setInterval(() => {
         }
       }
       beginGeneration(room);
-    } else if (room.phase === "presenting" && now - room.phaseStartedAt > room.gallery.length * PRESENT_MS) {
-      room.phase = "voting";
-      room.phaseStartedAt = now;
-      for (const p of room.players) {
-        if (!p.isBot) continue;
-        setTimeout(() => {
-          if (room.phase !== "voting" || room.votes.has(p.id)) return;
-          const targets = room.gallery.filter((id) => id !== p.id);
-          room.votes.set(p.id, targets[Math.floor(Math.random() * targets.length)]);
-          if (room.votes.size >= room.players.length) reveal(room);
-        }, 2000 + Math.random() * 5000);
-      }
+    } else if (room.phase === "presenting" && now - room.presentStartedAt > PRESENT_MS) {
+      advancePresent(room);
     } else if (room.phase === "voting" && now - room.phaseStartedAt > VOTING_MS) {
       reveal(room);
     } else if (room.phase === "comeback" && now - room.phaseStartedAt > COMEBACK_MS) {
@@ -307,7 +318,7 @@ function publicState(room, viewerId) {
     phaseEndsAt: room.phase === "writing" ? room.phaseStartedAt + WRITING_MS
       : room.phase === "voting" ? room.phaseStartedAt + VOTING_MS
       : room.phase === "comeback" ? room.phaseStartedAt + COMEBACK_MS
-      : room.phase === "presenting" ? room.phaseStartedAt + room.gallery.length * PRESENT_MS : null,
+      : room.phase === "presenting" ? room.presentStartedAt + PRESENT_MS : null,
     submittedCount: room.submissions.size,
     playerCount: room.players.length,
     mySubmitted: room.submissions.has(viewerId),
@@ -318,13 +329,19 @@ function publicState(room, viewerId) {
     base.youAreImpostor = isImpostor;
   }
   if (room.phase === "presenting") {
-    const idx = Math.min(room.gallery.length - 1, Math.floor((Date.now() - room.phaseStartedAt) / PRESENT_MS));
-    const pid = room.gallery[idx];
+    const start = (room.presentIdx || 0) * 2;
+    const pids = room.gallery.slice(start, start + 2);
     base.present = {
-      index: idx,
-      total: room.gallery.length,
-      imageUrl: room.submissions.get(pid)?.imageUrl || null,
-      isMine: pid === viewerId,
+      screen: room.presentIdx || 0,
+      screens: presentScreens(room),
+      from: start + 1,
+      to: start + pids.length,
+      totalImages: room.gallery.length,
+      isHost: viewerId === room.hostId,
+      items: pids.map((pid) => ({
+        imageUrl: room.submissions.get(pid)?.imageUrl || null,
+        isMine: pid === viewerId,
+      })),
     };
   }
   if (room.phase === "voting" || room.phase === "comeback" || room.phase === "reveal") {
@@ -428,6 +445,13 @@ const server = http.createServer(async (req, res) => {
         if (!room.submissions.has(b.targetPlayerId)) return json(res, 400, { error: "対象がありません" });
         room.votes.set(b.playerId, b.targetPlayerId);
         if (room.votes.size >= room.players.length) reveal(room);
+        return json(res, 200, { ok: true });
+      }
+      if (req.method === "POST" && parts[3] === "present-next") {
+        const b = await bodyJson(req);
+        if (room.phase !== "presenting") return json(res, 400, { error: "絵の表示フェーズではありません" });
+        if (b.playerId !== room.hostId) return json(res, 403, { error: "ホストだけが進められます" });
+        advancePresent(room);
         return json(res, 200, { ok: true });
       }
       if (req.method === "POST" && parts[3] === "comeback") {
