@@ -12,6 +12,8 @@ const FLOYO_KEY = process.env.FLOYO_API_KEY || "";
 const FLOYO_API = "https://api.floyo.ai";
 const WRITING_MS = 90_000;
 const VOTING_MS = 60_000;
+const COMEBACK_MS = 30_000;
+const foldKana = (s) => String(s || "").trim().replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
 
 // お題デッキ（2026-11-14 ユーザー指示でシンプル化：短い一場面ワード、ジャンル別）
 // 追加はこの配列に足して再デプロイするだけ。
@@ -202,25 +204,53 @@ function beginGeneration(room) {
   });
 }
 
+// 投票の締め。当たっていたら即確定、外れていたらインポスターの「逆転当て」フェーズへ（2026-11-14追加）。
 function reveal(room) {
   const tally = new Map();
   for (const t of room.votes.values()) tally.set(t, (tally.get(t) || 0) + 1);
   const impVotes = tally.get(room.impostorId) || 0;
   const maxVotes = Math.max(0, ...tally.values());
   const caught = impVotes > 0 && impVotes >= maxVotes;
+  room.pendingTally = Object.fromEntries(tally);
+  if (!caught) {
+    const gained = {};
+    const imp = room.players.find((p) => p.id === room.impostorId);
+    if (imp) { imp.score += 3; gained[room.impostorId] = 3; }
+    room.lastResult = { tally: room.pendingTally, caught, gained };
+    room.phase = "reveal";
+    room.phaseStartedAt = Date.now();
+    return;
+  }
+  // 的中 → 逆転当てフェーズ（インポスターがお題を当てれば勝ちがひっくり返る）
+  room.phase = "comeback";
+  room.phaseStartedAt = Date.now();
+  const imp = room.players.find((p) => p.id === room.impostorId);
+  if (imp?.isBot) {
+    setTimeout(() => {
+      if (room.phase !== "comeback") return;
+      finishComeback(room, TOPICS[Math.floor(Math.random() * TOPICS.length)]);
+    }, 4000);
+  }
+}
+
+function finishComeback(room, guess) {
+  const success = !!guess && foldKana(guess) === foldKana(room.topic);
   const gained = {};
-  if (caught) {
+  if (success) {
+    const imp = room.players.find((p) => p.id === room.impostorId);
+    if (imp) { imp.score += 3; gained[room.impostorId] = 3; }
+  } else {
     for (const [voter, target] of room.votes.entries()) {
       if (target === room.impostorId) {
         const pl = room.players.find((p) => p.id === voter);
         if (pl) { pl.score += 2; gained[voter] = 2; }
       }
     }
-  } else {
-    const imp = room.players.find((p) => p.id === room.impostorId);
-    if (imp) { imp.score += 3; gained[room.impostorId] = 3; }
   }
-  room.lastResult = { tally: Object.fromEntries(tally), caught, gained };
+  room.lastResult = {
+    tally: room.pendingTally, caught: true, gained,
+    comeback: { guess: guess || null, success },
+  };
   room.phase = "reveal";
   room.phaseStartedAt = Date.now();
 }
@@ -238,6 +268,8 @@ setInterval(() => {
       beginGeneration(room);
     } else if (room.phase === "voting" && now - room.phaseStartedAt > VOTING_MS) {
       reveal(room);
+    } else if (room.phase === "comeback" && now - room.phaseStartedAt > COMEBACK_MS) {
+      finishComeback(room, null);
     }
   }
 }, 1000);
@@ -253,17 +285,18 @@ function publicState(room, viewerId) {
     hostId: room.hostId,
     players: room.players.map((p) => ({ id: p.id, name: p.name, score: p.score, isBot: p.isBot })),
     phaseEndsAt: room.phase === "writing" ? room.phaseStartedAt + WRITING_MS
-      : room.phase === "voting" ? room.phaseStartedAt + VOTING_MS : null,
+      : room.phase === "voting" ? room.phaseStartedAt + VOTING_MS
+      : room.phase === "comeback" ? room.phaseStartedAt + COMEBACK_MS : null,
     submittedCount: room.submissions.size,
     playerCount: room.players.length,
     mySubmitted: room.submissions.has(viewerId),
     myVote: room.votes.get(viewerId) || null,
   };
-  if (["writing", "generating", "voting", "reveal"].includes(room.phase)) {
+  if (["writing", "generating", "voting", "comeback", "reveal"].includes(room.phase)) {
     base.topic = isImpostor ? null : room.topic;
     base.youAreImpostor = isImpostor;
   }
-  if (room.phase === "voting" || room.phase === "reveal") {
+  if (room.phase === "voting" || room.phase === "comeback" || room.phase === "reveal") {
     base.gallery = room.gallery.map((pid) => ({
       playerId: pid,
       imageUrl: room.submissions.get(pid)?.imageUrl || null,
@@ -362,6 +395,13 @@ const server = http.createServer(async (req, res) => {
         if (!room.submissions.has(b.targetPlayerId)) return json(res, 400, { error: "対象がありません" });
         room.votes.set(b.playerId, b.targetPlayerId);
         if (room.votes.size >= room.players.length) reveal(room);
+        return json(res, 200, { ok: true });
+      }
+      if (req.method === "POST" && parts[3] === "comeback") {
+        const b = await bodyJson(req);
+        if (room.phase !== "comeback") return json(res, 400, { error: "逆転当てフェーズではありません" });
+        if (b.playerId !== room.impostorId) return json(res, 403, { error: "インポスターだけが答えられます" });
+        finishComeback(room, String(b.guess || "").slice(0, 30));
         return json(res, 200, { ok: true });
       }
       if (req.method === "POST" && parts[3] === "next") {
